@@ -54,6 +54,7 @@
 #include "service_param.h"
 #include "service_time.h"
 #include "service_wifi.h"
+#include "freertos/semphr.h"
 #include "service_monitor.h"
 
 #include "hal_api.h"
@@ -116,6 +117,8 @@ static volatile uint8_t m_ble_link_epoch = 0;
 static volatile uint8_t m_ble_abort_pending = 0;
 static atomic_bool m_ble_sleep_stop_sent = false;
 static atomic_bool m_ble_sleep_done = false;
+static atomic_bool m_wifi_ble_paused = false;
+static SemaphoreHandle_t m_wifi_ble_mutex;
 static uint8_t m_ota_trans_state = BLE_OTA_TRANS_IDLE;
 static uint32_t m_ota_trans_file_size = 0;
 static uint32_t m_ota_trans_received = 0;
@@ -140,7 +143,10 @@ static const char *ble_name_suffix_or_default(void);
 
 void service_ble_transfer_disconnected(void)
 {
-    service_wifi_direct_cancel();
+#ifndef ARK_AP_FILE_BENCH
+    if(!service_ble_wifi_paused()) service_wifi_direct_cancel();
+#endif
+    /* The autonomous AP diagnostic deliberately disconnects BLE; TCP owns its lifetime. */
     m_ble_link_epoch++;
     m_ble_abort_pending = 1;
     if(m_ble_msg_hdl)
@@ -298,6 +304,7 @@ void service_ble_init(void)
         return;
     }
 
+    if(!m_wifi_ble_mutex) m_wifi_ble_mutex = xSemaphoreCreateMutex();
     // 初始化ble服务
     service_ble_gatt_server_init();
     service_ble_gatts_cmd_register_cb(service_ble_msg_gatts_cmd_send);
@@ -325,6 +332,14 @@ void service_ble_init(void)
 void service_ble_apply_enable(uint8_t on)
 {
     g_service_param.ble.ble_enable = on ? 1 : 0;
+    if(service_ble_wifi_paused()) {
+        /* The transfer owner restores the desired switch, without racing the host. */
+        wifi_direct_status_t status;
+        service_wifi_direct_get_status(&status);
+        if(on && (!service_wifi_direct_busy() || status.state == WIFI_DIRECT_READY))
+            (void)service_ble_wifi_resume();
+        return;
+    }
 
     if(on)
     {
@@ -356,6 +371,65 @@ void service_ble_apply_enable(uint8_t on)
 
     sys_logi(BEL_SERVICE_TAG, "BLE %s", on ? "ON" : "OFF");
 }
+
+bool service_ble_wifi_paused(void)
+{
+    return atomic_load(&m_wifi_ble_paused);
+}
+
+bool service_ble_wifi_pause(void)
+{
+    if(!m_wifi_ble_mutex || xSemaphoreTake(m_wifi_ble_mutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+        return false;
+    if(atomic_exchange(&m_wifi_ble_paused, true)) {
+        xSemaphoreGive(m_wifi_ble_mutex);
+        return true;
+    }
+    if(m_ble_up) {
+        m_ble_up = 0;
+        service_ble_gatt_server_uninit();
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    int err = service_ble_gatt_wifi_pause();
+    xSemaphoreGive(m_wifi_ble_mutex);
+    sys_logi(BEL_SERVICE_TAG, "WiFi planned BLE pause result=%d", err);
+    return err == ESP_OK;
+}
+
+bool service_ble_wifi_resume(void)
+{
+    if(!m_wifi_ble_mutex || xSemaphoreTake(m_wifi_ble_mutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+        return false;
+    if(!atomic_load(&m_wifi_ble_paused) || !g_service_param.ble.ble_enable) {
+        xSemaphoreGive(m_wifi_ble_mutex);
+        return true;
+    }
+    int err = service_ble_gatt_wifi_resume();
+    if(err == ESP_OK && g_service_param.ble.ble_enable) {
+        m_ble_up = 1;
+        atomic_store(&m_wifi_ble_paused, false);
+    } else if(err == ESP_OK) {
+        service_ble_gatt_server_uninit();
+        err = service_ble_gatt_wifi_pause();
+    }
+    xSemaphoreGive(m_wifi_ble_mutex);
+    sys_logi(BEL_SERVICE_TAG, "WiFi BLE restore result=%d", err);
+    return err == ESP_OK;
+}
+
+#ifdef ARK_AP_FILE_BENCH
+bool service_ble_ap_file_bench_stop(void)
+{
+    if(!service_ble_prepare_sleep()) return false;
+    if(m_ble_up) {
+        service_ble_gatts_dev_disconnect();
+        service_ble_gatt_server_uninit();
+        m_ble_up = 0;
+    }
+    /* No parameter change or save: this shutdown lasts only until the normal reboot. */
+    return service_ble_gatt_ap_file_bench_deinit() == ESP_OK;
+}
+#endif
 
 /**
  * [service_ble_msg_send ble事件msg发送]
@@ -738,7 +812,11 @@ static void ble_cmd_process(ble_cmd_t *cmd)
         return;
     }
 
-    if(service_wifi_direct_busy() && ble_cmd_conflicts_with_direct(cmd->ch))
+    bool ap_start = service_wifi_softap_waiting() &&
+                    (cmd->ch == BLE_FILM_TRANS_CH_DIRECT_START ||
+                     cmd->ch == BLE_FILM_TRANS_CH_DIRECT_FILE_START ||
+                     cmd->ch == BLE_FILM_TRANS_CH_DIRECT_OTA_START);
+    if(service_wifi_direct_busy() && !ap_start && ble_cmd_conflicts_with_direct(cmd->ch))
     {
         const uint8_t busy = 1;
         service_ble_send_resp(cmd->ch, &busy, 1);
@@ -747,10 +825,28 @@ static void ble_cmd_process(ble_cmd_t *cmd)
 
     switch(cmd->ch)
     {
+        case BLE_FILM_TRANS_CH_DIRECT_AP_PREPARE:
+        {
+            uint8_t out[1 + 33 + 64 + 16] = {2};
+            char ssid[33], password[64];
+            if(cmd->len == 0) {
+                bool legacy_busy = (m_film_trans_state > BLE_FILM_TRANS_IDLE && m_film_trans_state < BLE_FILM_TRANS_STOPPED) ||
+                                   (m_ota_trans_state > BLE_OTA_TRANS_IDLE && m_ota_trans_state < BLE_OTA_TRANS_STOPPED);
+                out[0] = legacy_busy ? 1 : service_wifi_softap_prepare(ssid, password);
+            }
+            size_t length = 1;
+            if(out[0] == 0) {
+                memcpy(out + length, ssid, strlen(ssid) + 1); length += strlen(ssid) + 1;
+                memcpy(out + length, password, strlen(password) + 1); length += strlen(password) + 1;
+                memcpy(out + length, "192.168.4.1", sizeof("192.168.4.1")); length += sizeof("192.168.4.1");
+            }
+            service_ble_send_resp(cmd->ch, out, length);
+            break;
+        }
         case BLE_FILM_TRANS_CH_CAPABILITIES_GET:
         {
             if(cmd->len != 0) break;
-            const uint8_t capabilities[5] = {1, 0, 0, 0, 15};
+            const uint8_t capabilities[5] = {1, 0, 0, 0, 31};
             service_ble_send_resp(cmd->ch, capabilities, sizeof(capabilities));
             break;
         }

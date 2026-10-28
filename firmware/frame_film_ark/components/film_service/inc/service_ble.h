@@ -108,6 +108,7 @@ extern "C"{
 #define BLE_FILM_TRANS_CH_CAPABILITIES_GET (0x59) // Ark version + flags: bit0=color pass, bit1=WiFi file, bit2=catalog, bit3=atomic IMAGE open
 #define BLE_FILM_TRANS_CH_STORAGE_CATALOG (0x5B) // Ark read-only storage/catalog
 #define BLE_FILM_TRANS_CH_DIRECT_FILE_START (0x5A) // SSID\0PASSWORD\0URL\0相对路径\0
+#define BLE_FILM_TRANS_CH_DIRECT_AP_PREPARE (0x5C) // RAM SoftAP reservation
 #define BLE_DIRECT_START_DATA_MAX                         (192)
 
 /* 蓝牙设备名 = 编译期前缀 "FRAMEFILMARK-" (13B) + 可配置后缀 (1..16B)，完整名上限 29B
@@ -202,6 +203,13 @@ extern void service_ble_msg_gatts_cmd_send( uint8_t const *p_data, uint16_t len 
 extern void service_ble_transfer_disconnected(void); // GATT 回调中仅标记，不阻塞
 /* 入睡屏障：拒收新命令，等待 BLE 任务取消并关闭其文件写入。 */
 extern bool service_ble_prepare_sleep(void);
+/* Transfer-only stack shutdown. Does not change the saved BLE setting. */
+extern bool service_ble_wifi_pause(void);
+extern bool service_ble_wifi_resume(void);
+extern bool service_ble_wifi_paused(void);
+#ifdef ARK_AP_FILE_BENCH
+extern bool service_ble_ap_file_bench_stop(void);
+#endif
 extern void service_ble_msg_gatts_data_send( uint8_t const *p_data, uint16_t len, uint8_t ch);
 
 /**

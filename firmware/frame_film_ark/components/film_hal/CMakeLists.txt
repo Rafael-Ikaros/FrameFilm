@@ -20,3 +20,6 @@ idf_component_register(SRCS ${srcs}
                        INCLUDE_DIRS ${public_include}
                        REQUIRES ${requires}
                       )
+if(ARK_AP_FILE_BENCH)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE ARK_AP_FILE_BENCH=1)
+endif()

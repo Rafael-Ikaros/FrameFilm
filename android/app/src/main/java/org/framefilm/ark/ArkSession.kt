@@ -53,12 +53,12 @@ class ArkSession(context: Context, private val listener: Listener) {
         override fun onState(state: String) {
             // ArkBleController emits this before onReady. Defer ordinary refresh
             // until an interrupted transfer has settled.
-            if (!closed && !(ble.isReady && (readyAfterCleanup || needsTransferRecovery())))
+            if (!closed && coordinator?.expectsBleResume != true && !(ble.isReady && (readyAfterCleanup || needsTransferRecovery())))
                 listener.onConnection(ble.isReady, state)
         }
         override fun onError(message: String) {
             readyAfterCleanup = false
-            if (!closed) listener.onConnection(false, message)
+            if (!closed && coordinator?.expectsBleResume != true) listener.onConnection(false, message)
             if (!ble.isReady) {
                 coordinator?.onBleDisconnected()
                 failQueuedWrites("Ark 蓝牙已断开")
@@ -90,6 +90,15 @@ class ArkSession(context: Context, private val listener: Listener) {
     private fun resumeReadyAfterCleanup() {
         if (!readyAfterCleanup || closed || !ble.isReady || settling) return
         val previous = coordinator
+        if (closing && previous?.isActive != true && previous?.cleanupConfirmed != false) {
+            readyAfterCleanup = false
+            finishClose()
+            return
+        }
+        if (previous?.expectsBleResume == true) {
+            previous.onBleReady()
+            return
+        }
         if (previous != null && !previous.needsConfirmation && previous.isActive) return
         if (previous != null && !previous.needsConfirmation && !previous.cleanupConfirmed) {
             settling = true
@@ -238,7 +247,7 @@ class ArkSession(context: Context, private val listener: Listener) {
                         }
                     }, input.firmware, reconnect = {
                         val device = connectedDevice
-                        if (!closed && !closing && device != null) ble.connect(device)
+                        if (!closed && device != null && (!closing || coordinator?.expectsBleResume == true)) ble.connect(device)
                     }, targetPath = input.targetPath)
                 coordinator = next
                 next.start()

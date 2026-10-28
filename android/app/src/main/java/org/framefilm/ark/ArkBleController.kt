@@ -241,6 +241,7 @@ class ArkBleController(context: Context, private val listener: Listener) {
     }
 
     val isReady: Boolean get() = ready
+    val isConnecting: Boolean get() = gatt != null && !ready
     fun scannedName(address: String): String? = deviceNames[address]
     val isBusy: Boolean get() = pending != null || writeOnly != null
     val negotiatedMtu: Int get() = mtu

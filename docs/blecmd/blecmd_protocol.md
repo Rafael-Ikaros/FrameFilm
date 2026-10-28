@@ -6,7 +6,7 @@
 - [2. 协议框架](#2-协议框架)
 - [3. 通道定义](#3-通道定义)
 - [4. 命令详解](#4-命令详解)
-- Ark 扩展：[临时 WiFi 直传](#411-ark-临时-wifi-直传)、[通行证资料](#412-ark-通行证资料读取0x53)、[设备名称](#413-ark-设备名称0x54--0x55)、[WiFi OTA](#414-ark-wifi-ota0x560x58)
+- Ark 扩展：[临时 WiFi 直传](#411-ark-临时-wifi-直传)、[通行证资料](#412-ark-通行证资料读取0x53)、[设备名称](#413-ark-设备名称0x54--0x55)、[WiFi OTA](#414-ark-wifi-ota0x560x58)、[SoftAP 直传](#418-ark-softap-文件直传0x5c)
 - [5. 校验和计算](#5-校验和计算)
 - [6. C 语言示例](#6-c-语言示例)
 - [7. 版本历史](#7-版本历史)
@@ -309,7 +309,7 @@
 
 | 通道 | 名称 | 请求 | 响应 |
 |---|---|---|---|
-| 0x59 | CAPABILITIES_GET | 空 | 版本 1(u8) + flags(u32 BE)，bit0=彩色通行证、bit1=通用 WiFi 文件上传、bit2=只读 SD 目录与统计 |
+| 0x59 | CAPABILITIES_GET | 空 | 版本 1(u8) + flags(u32 BE)，bit0=彩色通行证、bit1=通用 WiFi 文件上传、bit2=只读 SD 目录与统计、bit4=Ark SoftAP 直传 |
 
 ### 3.16 Ark 通用 WiFi 文件上传（0x5A）
 
@@ -318,6 +318,14 @@
 | 通道 | 名称 | 请求 DATA | 同通道响应 DATA |
 |---|---|---|---|
 | 0x5A | WIFI_DIRECT_FILE_START | `SSID\0PASSWORD\0URL\0相对目标路径\0` | 1B：0 接受 / 1 忙 / 2 参数错误 / 3 资源不足 |
+
+### 3.17 Ark SoftAP 准备（0x5C）
+
+仅 `frame_film_ark` 支持，拓扑与兼容规则见 [§4.17](#418-ark-softap-文件直传0x5c)。
+
+| 通道 | 名称 | 请求 DATA | 同通道响应 DATA |
+|---|---|---|---|
+| 0x5C | DIRECT_AP_PREPARE | 空 | status(u8)；status=0 时追加 `SSID\0PASSWORD\0IP\0`，失败时仅 status |
 
 ## 4. 命令详解
 
@@ -1490,7 +1498,7 @@ SUM  = (0x55 + 0x4E + 0x01 + 0x02) & 0xFF = 0xA6
 
 ### 4.15 Ark 能力查询（0x59）与彩色通行证
 
-仅 `frame_film_ark` 实现 `CAPABILITIES_GET`：请求 LEN=0，回包 LEN=5，`capVersion=1(u8)` 后接 `flags(u32 BE)`。bit0 (`0x00000001`) 表示支持通行证彩色 `profile.bin`；bit1 (`0x00000002`) 表示支持 0x5A 通用 WiFi 文件上传，bit2 (`0x00000004`) 表示支持只读 SD 目录与统计 0x5B，bit3 (`0x00000008`) 表示支持0x4B按文件名原子打开图片，当前 flags=`0x0000000F`；其余位保留且为零。旧固件不响应此命令，客户端应提示升级固件或选择黑白模式，不发送彩色资料，不能凭用户可见版本号判断能力。
+仅 `frame_film_ark` 实现 `CAPABILITIES_GET`：请求 LEN=0，回包 LEN=5，`capVersion=1(u8)` 后接 `flags(u32 BE)`。bit0 (`0x00000001`) 表示支持通行证彩色 `profile.bin`；bit1 (`0x00000002`) 表示支持 0x5A 通用 WiFi 文件上传，bit2 (`0x00000004`) 表示支持只读 SD 目录与统计 0x5B，bit3 (`0x00000008`) 表示支持0x4B按文件名原子打开图片，bit4 (`0x00000010`) 表示支持 Ark SoftAP 直传准备命令 0x5C；其余未定义位保留。capVersion 保持 1；旧固件不响应此命令，客户端按能力位选择功能，不能凭用户可见版本号判断能力。
 
 通行证卡片文件仍放在 `/sdcard/app/pass/profile.bin`，文件头 16B：`FFUI`(4B)、version(1B)、format(1B)、width=440(u16 LE)、height=608(u16 LE)、保留零(6B)。原 v1/format1 的正文为 33440B、每字节 MSB 起 8 个黑白像素（1=黑）；新 v2/format2 的正文为 133760B、每字节高 nibble 为左像素，色码为黑0、白1、黄2、红3、蓝5、绿6。整文件分别为 33456B 和 133776B。彩色卡仅在 Ark UI 通行证页合成到黑白外壳，整屏走 EPD 4bpp 彩色刷新；退出页面回到原黑白 UI 路径。
 
@@ -1511,6 +1519,19 @@ HTTP 响应需为 200 且有非零 Content-Length；文件可为任意非空二�
 两个只读操作均独立扫描固定 `/sdcard/film` 或 `/sdcard/animation`；只统计常规 `.film` 文件且大小至少32字节，与播放列表规则一致。不存在的目录视为空且不创建目录，不清理临时文件，不修改活跃目录、播放缓冲或文件列表，不发布文件事件，也不切 app 或刷新画面。读取失败可得到部分有效统计。
 
 客户端显式“显示图片”时，有0x59 bit3的固件使用0x4B按文件名原子打开，不把只读目录下标当播放ID，也不先切页恢复旧图。动画目录沿现有切到目标app、读取活跃列表并按名称映射ID的流程。删除仅在对应app已活跃时可用：先回读app、重读活跃列表、按文件名映射ID，再发0x05；禁止把浏览索引直接当作ID，也禁止为了删除隐式切app。删除确认后沿用既有删除、列表刷新与播放缓冲失效语义。
+
+### 4.18 Ark SoftAP 文件直传（0x5C）
+
+本拓扑仅用于支持能力的 Ark 固件。Android 10 及以上手机作为 WiFi STA 提供 HTTP 文件服务；设备通过 0x5C 准备自己的 SoftAP，手机连接设备 AP 后，设备访问手机 STA 地址上的 HTTP URL。Android 9 与不支持该能力的旧固件继续使用既有 WiFi Direct P2P GO 流程。固件显示版本号仍可能为 3.2.5，能力应通过 0x59 查询，不以版本号推断。
+
+`DIRECT_AP_PREPARE` 请求 DATA 必须为空。设备预留直传会话并异步启动 SoftAP，响应 DATA 为 `status(u8)`；status=0 表示已接受准备，响应 DATA 随后包含 `SSID\0PASSWORD\0IP\0`，字符串为 ASCII NUL 结尾，IP 为设备 AP 地址。status=1 忙、2 参数错误、3 资源不足时响应只有 status 字节。接受不代表 AP 已就绪；客户端应使用返回的凭据连接，按需重试连接，随后以既有 0x50 或 0x5A（文件）或 0x57（OTA）启动下载。启动 payload 保持原格式，SSID 和密码必须与 0x5C 返回值一致，URL 指向手机 STA 地址上的现有 HTTP 文件服务。0x50/0x5A/0x57 的原始请求结构与内容校验语义不变。
+
+0x59 的 capVersion 保持 1，flags 继续使用 u32 大端；新增 bit4（`0x00000010`）表示 Ark SoftAP 直传能力，bit0–bit3 含义不变。客户端仅在该位存在时使用 0x5C；否则沿用旧 P2P 流程。
+
+会话准备阶段 BLE 保持可用，0x52 可取消已接受的准备；0x51 仍查询同一会话状态。实际进入数据期时，固件按计划暂停 BLE 以完成 WiFi 传输。取消路径先关闭手机 HTTP socket；设备恢复 BLE 后，客户端重新连接并用 0x51 确认终态与字节数。HTTP 服务端发送进度仅表示手机已发送数据，不能作为 SD 保存成功证据；只有设备恢复 BLE 后报告的 0x51 DONE 才表示保存完成。既有 0x51 状态字段、0x52 幂等取消语义和 0x58 OTA apply 语义均保留。普通文件传输正常结束无需重启；OTA 仍须 READY 后调用 0x58 apply，再重连并以构建 fingerprint 确认升级结果。
+
+已完成同一份 47,347,232 字节 film 文件的两轮 App 实机接收保存与 BLE 恢复验证（约 1.142 / 1.134 MB/s）。真正中途取消后重试、新拓扑 WiFi OTA 和通行证实体流程仍待验收；这些单设备结果不构成所有手机的最低速度保证。
+
 
 ## 5. 校验和计算
 
@@ -1672,6 +1693,7 @@ int parse_response(uint8_t* in_buf, int in_len, uint8_t* out_ch, uint8_t* out_da
 
 | 版本 | 日期 | 描述 |
 |------|------|------|
+| 1.18 | 2026-10-29 | Ark 新增 SoftAP 直传准备命令 0x5C 与 0x59 bit4；记录 Android 10+ 新拓扑、BLE 暂停/恢复确认及旧 P2P 兼容边界；两轮传图与恢复已验收，中途取消重试、OTA 和通行证仍待实机验收 |
 | 1.17 | 2026-10-16 | Ark 新增 0x5A 通用 WiFi 文件上传；0x59 bit1 宣告能力，复用 0x51/0x52 状态与取消 |
 | 1.16 | 2026-10-16 | 合并上游参数布局 v6 后保留 Ark 0x59 能力查询及彩色 FFUI v2 通行证；升级迁移 v5 系统参数与原独立蓝牙名 |
 | 1.15 | 2026-10-12 | Ark 设备名称后缀改随系统参数 blob 持久化（`ServiceBle_Def_t.ble_name`，取消独立 NVS key `ble_name`；`SERVICE_PARAM_VER` 升至 6）；0x54/0x55 报文与生效时机不变 |

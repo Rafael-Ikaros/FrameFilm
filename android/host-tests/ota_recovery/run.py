@@ -23,6 +23,7 @@ SOURCES = [
     ROOT / "android/app/src/main/java/org/framefilm/ark/DirectTransferCoordinator.kt",
     ROOT / "android/app/src/main/java/org/framefilm/ark/TransferSnapshot.kt",
     ROOT / "android/app/src/main/java/org/framefilm/ark/ArkFirmware.kt",
+    ROOT / "android/app/src/main/java/org/framefilm/ark/ArkApSession.kt",
     ROOT / "android/app/src/main/java/org/framefilm/ark/FileTransferPath.kt",
     HERE / "stubs/android/content/Context.kt",
     HERE / "stubs/android/bluetooth/BluetoothDevice.kt",

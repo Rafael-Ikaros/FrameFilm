@@ -28,6 +28,8 @@ extern "C" {
 #define EPD_SELECT_E6_3_60_600_400   1
 #define EPD_SELECT_E6_1_54_240_240   0
 #define EPD_SELECT_E6_7_09_1600_1200 0
+#define EPD_SELECT_E6_3_98_768_552   0
+#define EPD_SELECT_E4_3_98_768_552   0
 #endif
 #if FRAMEFILM_PRO == 1
 #define EPD_SELECT_E6_3_68_792_528   1
@@ -36,6 +38,8 @@ extern "C" {
 #define EPD_SELECT_E6_3_60_600_400   0
 #define EPD_SELECT_E6_1_54_240_240   0
 #define EPD_SELECT_E6_7_09_1600_1200 0
+#define EPD_SELECT_E6_3_98_768_552   0
+#define EPD_SELECT_E4_3_98_768_552   0
 #endif
 #if FRAMEFILM_MAX == 1
 #define EPD_SELECT_E6_3_68_792_528   0
@@ -44,6 +48,8 @@ extern "C" {
 #define EPD_SELECT_E6_3_60_600_400   0
 #define EPD_SELECT_E6_1_54_240_240   0
 #define EPD_SELECT_E6_7_09_1600_1200 1
+#define EPD_SELECT_E6_3_98_768_552   0
+// 3.98" 四色屏（JD79665AA）需要 DC 脚，Max 接线无 DC，不支持
 #endif
 
 #if EPD_SELECT_E6_3_68_792_528 == 1
@@ -70,6 +76,14 @@ extern "C" {
 #define EPD_WIDTH                      760
 #define EPD_HEIGHT                     568
 #define EPD_PANEL_ID                   0x06    // 3.64" 760×568
+#elif EPD_SELECT_E6_3_98_768_552 == 1
+#define EPD_WIDTH                      768
+#define EPD_HEIGHT                     552
+#define EPD_PANEL_ID                   0x07    // 3.98" 768×552 (SE0398, 六色)
+#elif EPD_SELECT_E4_3_98_768_552 == 1
+#define EPD_WIDTH                      768
+#define EPD_HEIGHT                     552
+#define EPD_PANEL_ID                   0x08    // 3.98" 768×552 (JD79665AA, 四色)
 #endif
 
 //IO settings

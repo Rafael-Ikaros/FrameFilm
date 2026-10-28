@@ -305,8 +305,8 @@ function generateFilmHeader() {
     header[6] = screenHeight & 0xFF;
     header[7] = (screenHeight >> 8) & 0xFF;
 
-    // ColorCount (1 byte) - 6色
-    header[8] = 6;
+    // ColorCount (1 byte) - 六色；四色屏（0x08）只声明 4 色
+    header[8] = (typeof is4ColorMode === 'function' && is4ColorMode()) ? 4 : 6;
 
     // Reserved (7 bytes) - 保留字段，填充0
     // header[9] 到 header[15] 保持为0
@@ -660,18 +660,33 @@ const paletteHsl = rgbPalette.map(function(c) {
     return { color: c, hsl: rgbToHsl(c.r, c.g, c.b) };
 });
 
+// 四色屏（0x08 JD79665AA）只用黑/白/黄/红，量化时把蓝/绿从候选色中剔除
+const paletteHsl4 = rgbPalette.slice(0, 4).map(function(c) {
+    return { color: c, hsl: rgbToHsl(c.r, c.g, c.b) };
+});
+
+function activePaletteHsl() {
+    return (typeof is4ColorMode === 'function' && is4ColorMode()) ? paletteHsl4 : paletteHsl;
+}
+
 function findClosestColor(r, g, b) {
     const input = rgbToHsl(r, g, b);
+    const paletteHslActive = activePaletteHsl();
 
     if (input.s < 0.12) {
         return input.l > 0.5 ? rgbPalette[1] : rgbPalette[0];
     }
 
+    // 四色屏没有蓝色：蓝/青色统一按黑（红/黄都更失真）
+    if (paletteHslActive.length === 4 && input.s >= 0.35 && input.h >= 190 && input.h <= 330) {
+        return rgbPalette[0];
+    }
+
     let minDist = Infinity;
     let closestColor = rgbPalette[0];
 
-    for (let i = 2; i < paletteHsl.length; i++) {
-        const p = paletteHsl[i];
+    for (let i = 2; i < paletteHslActive.length; i++) {
+        const p = paletteHslActive[i];
         let hueDiff = Math.abs(input.h - p.hsl.h);
         if (hueDiff > 180) hueDiff = 360 - hueDiff;
         const satDiff = Math.abs(input.s - p.hsl.s);
@@ -2035,6 +2050,16 @@ function buildCurrentFilmFile() {
 function ditherImage(imageData) {
     const ditherType = document.getElementById('ditherType').value;
     const ditherStrength = parseFloat(document.getElementById('ditherStrength').value);
+
+    // 四色屏（0x08 JD79665AA）只有黑/白/黄/红：6 色专用算法会把误差扩散到
+    // 该屏不存在的蓝/绿上，统一回退到 Floyd-Steinberg + 四色量化
+    if (typeof is4ColorMode === 'function' && is4ColorMode() &&
+        (ditherType === 'atkinsonEnhanced' || ditherType === 'atkinsonSzCalib' ||
+         ditherType === 'szEnhanced' || ditherType === 'colorFast55' ||
+         ditherType === 'colorQual' || ditherType === 'colorQualMeasured' ||
+         ditherType === 'colorQualCalibrated')) {
+        return floydSteinbergDither(imageData, ditherStrength);
+    }
 
     switch (ditherType) {
         case 'adaptive':

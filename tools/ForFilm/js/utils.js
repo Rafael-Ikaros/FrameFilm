@@ -68,6 +68,8 @@ function is8bppAvailable() {
 function setDeviceType(type) {
     if (DEVICE_CONFIGS[type]) {
         currentDeviceType = type;
+        // 面板未回包前按机型默认六色；收到 0x42 后由 applyScreenParams 覆盖
+        DEVICE_CONFIGS[type].colorCount = 6;
         onDeviceTypeChanged();
     }
 }
@@ -134,8 +136,16 @@ var PANEL_CONFIGS = {
     0x02: { deviceType: 'FRAMEFILMPRO', pixelLayout: 'rotated-180' },  // 3.70" 720×480
     0x03: { deviceType: 'FRAMEFILM',    pixelLayout: 'rotated' },      // 3.60" 600×400
     0x05: { deviceType: 'FRAMEFILMMAX', pixelLayout: 'row-major' },    // 7.09" 1200×1600
-    0x06: { deviceType: 'FRAMEFILMDOCK', pixelLayout: 'row-major' }    // 3.64" 760×568（底座）
+    0x06: { deviceType: 'FRAMEFILMDOCK', pixelLayout: 'row-major' },   // 3.64" 760×568（底座）
+    0x07: { deviceType: 'FRAMEFILMPRO', pixelLayout: 'row-major' },    // 3.98" 768×552（SE0398，六色）
+    0x08: { deviceType: 'FRAMEFILMPRO', pixelLayout: 'row-major', colorCount: 4 } // 3.98" 768×552（JD79665AA，四色）
 };
+
+// 当前屏幕是否四色（黑/白/黄/红）：由 0x42 回包的面板 ID 决定，驱动会忽略蓝/绿
+function is4ColorMode() {
+    var cfg = getDeviceConfig();
+    return !!cfg && cfg.colorCount === 4;
+}
 
 // 根据设备回传的屏幕参数（面板 ID + 分辨率）更新机型、画布尺寸与像素排布
 function applyScreenParams(panelId, width, height) {
@@ -154,6 +164,7 @@ function applyScreenParams(panelId, width, height) {
         cfg.screenWidth = width;
         cfg.screenHeight = height;
         cfg.pixelLayout = panel.pixelLayout;
+        cfg.colorCount = panel.colorCount || 6;
         onDeviceTypeChanged();
     }
     console.log('[ForFilm] 屏幕参数已更新: panelId=0x' + panelId.toString(16) + ', ' + width + 'x' + height + ' (' + cfg.displayName + ', ' + cfg.pixelLayout + ')');
@@ -170,7 +181,8 @@ function syncSzEnhancedAvailability() {
     }
     var option = select.querySelector('option[value="szEnhanced"]');
     var option2 = select.querySelector('option[value="atkinsonSzCalib"]');
-    var supportsSz = (currentDeviceType === 'FRAMEFILMPRO' || currentDeviceType === 'FRAMEFILMARK');
+    var supportsSz = (currentDeviceType === 'FRAMEFILMPRO' || currentDeviceType === 'FRAMEFILMARK')
+                     && !is4ColorMode();
     if (option) {
         option.disabled = !supportsSz;
     }

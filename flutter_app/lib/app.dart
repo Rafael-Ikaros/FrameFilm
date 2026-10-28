@@ -672,8 +672,10 @@ class _FrameFilmAppState extends State<FrameFilmApp> {
             ? '演示中的扫描、文件选择、传输及升级均为模拟。Film 页体验直传，设置页体验 OTA。'
             : '原生连接与文件传输\n扫描、连接和读取由 Android 蓝牙服务提供。film 文件直传请进入 Film 页。',
       ),
-      const SizedBox(height: 20),
-      connectionInfoPanel(context),
+      if (snapshot.connected) ...[
+        const SizedBox(height: 20),
+        connectionInfoPanel(context),
+      ],
     ];
   }
 
@@ -1382,33 +1384,21 @@ class _FrameFilmAppState extends State<FrameFilmApp> {
       children: [
         Text('连接信息', style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 16),
-        Text(
-          device.snapshot.connected ? device.snapshot.name ?? '已连接设备' : '未连接设备',
+        DeviceStorageSummary(
+          controller: device,
+          embedded: true,
+          onBrowseDirectory: (directory) {
+            navigate(5);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && page == 5 && scrollControllers[5].hasClients) {
+                scrollControllers[5].jumpTo(0);
+              }
+            });
+            unawaited(
+              device.command('setDeviceFileDirectory', {'appId': directory}),
+            );
+          },
         ),
-        const SizedBox(height: 8),
-        Text(
-          device.gateway.supported
-              ? device.snapshot.message
-              : '当前平台无蓝牙连接能力，仅供界面预览',
-        ),
-        if (device.snapshot.connected) ...[
-          const Divider(height: 32),
-          DeviceStorageSummary(
-            controller: device,
-            embedded: true,
-            onBrowseDirectory: (directory) {
-              navigate(5);
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted && page == 5 && scrollControllers[5].hasClients) {
-                  scrollControllers[5].jumpTo(0);
-                }
-              });
-              unawaited(
-                device.command('setDeviceFileDirectory', {'appId': directory}),
-              );
-            },
-          ),
-        ],
       ],
     ),
   );

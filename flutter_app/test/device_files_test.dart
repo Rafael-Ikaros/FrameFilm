@@ -34,6 +34,83 @@ class FilesGateway implements DeviceGateway {
 }
 
 void main() {
+  testWidgets(
+    'delete explains inactive app and only displays with explicit consent',
+    (tester) async {
+      final gateway = FilesGateway();
+      final controller = DeviceController(gateway);
+      addTearDown(() async {
+        controller.dispose();
+        await gateway.events.close();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: DeviceFilesPage(controller: controller),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      DeviceSnapshot files({required bool canDelete}) =>
+          DeviceSnapshot.fromMap({
+            'connected': true,
+            'files': {
+              'loaded': true,
+              'directory': 'film',
+              'canDelete': canDelete,
+              'entries': [
+                {'id': 0, 'name': 'a.film'},
+              ],
+            },
+          });
+      controller.snapshot = files(canDelete: false);
+      controller.notifyListeners();
+      await tester.pumpAndSettle();
+      final button = find.widgetWithText(TextButton, '删除');
+      await tester.ensureVisible(button);
+      expect(tester.widget<TextButton>(button).onPressed, isNotNull);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(find.text('请先打开对应 app'), findsOneWidget);
+      expect(gateway.calls, isNot(contains('displayDeviceFile')));
+      expect(gateway.calls, isNot(contains('deleteDeviceFile')));
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(gateway.calls, isNot(contains('displayDeviceFile')));
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('显示此文件'));
+      await tester.pumpAndSettle();
+      expect(
+        gateway.calls.where((c) => c == 'displayDeviceFile'),
+        hasLength(1),
+      );
+      expect(gateway.calls, isNot(contains('deleteDeviceFile')));
+
+      controller.snapshot = files(canDelete: true);
+      controller.notifyListeners();
+      await tester.pumpAndSettle();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(find.text('删除设备文件？'), findsOneWidget);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(gateway.calls, isNot(contains('deleteDeviceFile')));
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '删除'));
+      await tester.pumpAndSettle();
+      expect(gateway.calls.where((c) => c == 'deleteDeviceFile'), hasLength(1));
+
+      controller.busy = true;
+      controller.notifyListeners();
+      await tester.pump();
+      expect(tester.widget<TextButton>(button).onPressed, isNull);
+    },
+  );
+
   test(
     'auto files wait for initialization and commands, read once per session',
     () async {

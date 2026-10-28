@@ -8,28 +8,39 @@ class DeviceFilesPage extends StatelessWidget {
   final DeviceController controller;
 
   Future<void> _delete(BuildContext context, Map entry) async {
+    final files = controller.snapshot.files;
+    final canDelete = files['canDelete'] == true;
+    final knownDirectory =
+        files['directory'] == 'film' || files['directory'] == 'animation';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除设备文件？'),
-        content: Text('“${entry['name']}”将从设备 SD 卡删除。'),
+        title: Text(canDelete ? '删除设备文件？' : '请先打开对应 app'),
+        content: Text(
+          canDelete
+              ? '“${entry['name']}”将从设备 SD 卡删除。'
+              : knownDirectory
+              ? '设备尚未打开此目录对应的 app，暂时不能删除。“显示此文件”会切换设备画面；显示完成后，请再次点击删除。也可在设备上打开对应 app，再刷新列表。'
+              : '请先选择图片目录或动画目录，再在设备打开对应 app 并刷新列表后删除。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('取消'),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除'),
-          ),
+          if (canDelete || knownDirectory)
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(canDelete ? '删除' : '显示此文件'),
+            ),
         ],
       ),
     );
     if (confirmed == true) {
-      await controller.command('deleteDeviceFile', {
-        'id': entry['id'],
-        'name': entry['name'],
-      });
+      await controller.command(
+        canDelete ? 'deleteDeviceFile' : 'displayDeviceFile',
+        {'id': entry['id'], 'name': entry['name']},
+      );
     }
   }
 
@@ -88,7 +99,7 @@ class DeviceFilesPage extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const Text(
-            '浏览图片或动画目录只读取 SD 卡，不切换 app，也不刷新设备画面。点击“显示”才会切换到对应 app。删除需设备当前已打开对应 app。旧固件需升级后使用只读浏览。',
+            '浏览图片或动画目录只读取 SD 卡，不切换 app，也不刷新设备画面。点击“显示”才会切换到对应 app。删除需设备当前已打开对应 app；点击删除可查看操作提示。旧固件需升级后使用只读浏览。',
           ),
           if (snapshot.connected && !knownDirectory)
             const Padding(
@@ -171,7 +182,7 @@ class DeviceFilesPage extends StatelessWidget {
                           label: const Text('显示'),
                         ),
                         TextButton.icon(
-                          onPressed: available && files['canDelete'] == true
+                          onPressed: available
                               ? () => _delete(context, entry)
                               : null,
                           icon: const Icon(Icons.delete_outline),
